@@ -67,6 +67,26 @@ router.get('/', async (req: Request, res: Response) => {
   res.json({ items, total, sum, page: Number(page), limit: Number(limit) });
 });
 
+// GET /api/expenses/months - Obtener meses con gastos registrados
+router.get('/months', async (req: Request, res: Response) => {
+  const tenantId = req.tenant!.id;
+  
+  try {
+    const result = await expenseRepo()
+      .createQueryBuilder('expense')
+      .select('DISTINCT EXTRACT(MONTH FROM expense.date)', 'month')
+      .addSelect('EXTRACT(YEAR FROM expense.date)', 'year')
+      .where('expense.tenantId = :tenantId', { tenantId })
+      .orderBy('year', 'DESC')
+      .addOrderBy('month', 'DESC')
+      .getRawMany();
+    
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ message: 'Error al obtener meses con gastos' });
+  }
+});
+
 // POST /api/expenses
 router.post('/', async (req: Request, res: Response) => {
   const tenantId = req.tenant!.id;
