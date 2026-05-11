@@ -166,19 +166,52 @@ router.delete('/:id', adminOrAbove, async (req: Request, res: Response) => {
     return;
   }
 
-  await userRepoInstance.remove(user);
-
-  // 📝 LOG: Registro de Auditoría de Eliminación exitosa
-  await logAction({
-    tenantId: req.tenant!.id,
-    userId: req.user!.sub,
-    userName: (req.user as any).name,
-    action: AuditAction.DELETE,
-    module: 'users',
-    description: `Eliminó permanentemente al usuario ${user.name} (${user.email}) del sistema.`
+  // Verificar si el usuario tiene ventas asociadas
+  const salesRepo = AppDataSource.getRepository('Sale');
+  const hasSales = await salesRepo.count({ 
+    where: { cashierId: user.id } 
   });
 
-  res.json({ message: 'Usuario eliminado correctamente.' });
+  let message: string;
+  let deactivated = false;
+
+  if (hasSales > 0) {
+    // Si tiene ventas, solo desactivar
+    user.isActive = false;
+    await userRepoInstance.save(user);
+    message = `El usuario ${user.name} tiene ventas registradas. Ha sido desactivado pero no eliminado.`;
+    deactivated = true;
+    
+    // 📝 LOG: Registro de desactivación
+    await logAction({
+      tenantId: req.tenant!.id,
+      userId: req.user!.sub,
+      userName: (req.user as any).name,
+      action: AuditAction.UPDATE,
+      module: 'users',
+      description: `Desactivó al usuario ${user.name} (${user.email}) porque tiene ventas asociadas.`
+    });
+  } else {
+    // Si no tiene ventas, eliminar físicamente
+    await userRepoInstance.remove(user);
+    message = `Usuario ${user.name} eliminado correctamente.`;
+    
+    // 📝 LOG: Registro de eliminación
+    await logAction({
+      tenantId: req.tenant!.id,
+      userId: req.user!.sub,
+      userName: (req.user as any).name,
+      action: AuditAction.DELETE,
+      module: 'users',
+      description: `Eliminó permanentemente al usuario ${user.name} (${user.email}) del sistema.`
+    });
+  }
+
+  res.json({ 
+    message, 
+    deactivated,
+    hasSales: hasSales > 0 
+  });
 });
 
 export default router;
