@@ -5,9 +5,17 @@ import { Tenant } from './tenant.entity';
 import { authenticate, adminOrAbove } from '../../shared/middleware/auth.middleware';
 import { resolveTenant } from '../../shared/middleware/tenant.middleware';
 import { upload } from '../../shared/middleware/upload.middleware';
+import { v2 as cloudinary } from 'cloudinary';
 
 const router = Router();
 const tenantRepo = () => AppDataSource.getRepository(Tenant);
+
+// Configurar Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 // Todas las rutas requieren auth
 router.use(authenticate);
@@ -120,10 +128,32 @@ router.post('/me/logo', adminOrAbove, resolveTenant, upload.single('logo'), asyn
     res.status(400).json({ message: 'No se recibió ninguna imagen.' });
     return;
   }
-  const logoUrl = `/uploads/${req.file.filename}`;
-  await tenantRepo().update(req.tenant!.id, { logoUrl });
-  const updated = await tenantRepo().findOne({ where: { id: req.tenant!.id } });
-  res.json(updated);
+
+  try {
+    // Subir a Cloudinary desde el buffer en memoria
+    const result = await new Promise<any>((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          folder: `nexoadmin/logos/${req.tenant!.id}`,
+          public_id: 'logo',
+          overwrite: true,
+          transformation: [{ width: 200, height: 200, crop: 'limit' }],
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      stream.end(req.file!.buffer);
+    });
+
+    const logoUrl = result.secure_url;
+    await tenantRepo().update(req.tenant!.id, { logoUrl });
+    const updated = await tenantRepo().findOne({ where: { id: req.tenant!.id } });
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ message: 'Error al subir la imagen.' });
+  }
 });
 
 export default router;

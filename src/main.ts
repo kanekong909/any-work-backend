@@ -8,7 +8,6 @@ import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { AppDataSource } from './config/data-source';
-import path from 'path';
 
 // Rutas
 import authRoutes from './modules/auth/auth.routes';
@@ -29,8 +28,6 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Servir archivos estáticos de uploads
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // ── Seguridad ──────────────────────────────────────────────────
 app.use(helmet());
