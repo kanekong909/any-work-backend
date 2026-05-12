@@ -26,8 +26,9 @@ import auditRoutes from './modules/audit/audit.routes';
 dotenv.config();
 
 const app = express();
+// Confiar en el proxy de Railway (1 nivel)
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
-
 
 // ── Seguridad ──────────────────────────────────────────────────
 app.use(helmet());
