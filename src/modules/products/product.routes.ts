@@ -76,7 +76,7 @@ router.post('/', async (req: Request, res: Response) => {
     await logAction({
       tenantId: req.tenant!.id,
       userId: req.user!.sub,
-      userName: operatorName,
+      userName: operatorName || 'Usuario Desconocido',
       action: AuditAction.CREATE,
       module: 'inventory',
       description: `Creó el producto "${s.name}" con un stock inicial de ${s.stock} unidades (Precio venta: $${Number(s.salePrice).toLocaleString('es-CO')}).`
@@ -119,7 +119,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
     await logAction({
       tenantId: req.tenant!.id,
       userId: req.user!.sub,
-      userName: operatorName,
+      userName: operatorName || 'Usuario Desconocido',
       action: AuditAction.UPDATE,
       module: 'inventory',
       description: `Actualizó el producto "${s.name}": Cambió ${cambios.join(', ')}.`
@@ -150,7 +150,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
   await logAction({
     tenantId: req.tenant!.id,
     userId: req.user!.sub,
-    userName: operatorName,
+    userName: operatorName || 'Usuario Desconocido',
     action: AuditAction.DELETE,
     module: 'inventory',
     description: `Eliminó el producto "${product.name}" del catálogo del negocio.`
@@ -182,7 +182,7 @@ router.post('/categories', async (req: Request, res: Response) => {
     await logAction({
       tenantId: req.tenant!.id,
       userId: req.user!.sub,
-      userName: operatorName,
+      userName: operatorName || 'Usuario Desconocido',
       action: AuditAction.CREATE,
       module: 'inventory', 
       description: `Creó una nueva categoría de productos denominada "${c.name}".` // 👈 Corregido aquí
