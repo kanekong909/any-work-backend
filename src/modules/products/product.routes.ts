@@ -8,6 +8,7 @@ import { resolveTenant, checkModule } from '../../shared/middleware/tenant.middl
 import { Like, ILike } from 'typeorm';
 import { logAction } from '../../shared/utils/audit'; // 👈 Helper de auditoría
 import { AuditAction } from '../audit/audit-log.entity'; // 👈 Enum de acciones
+import { checkLimit } from '../../shared/utils/plan.utils';
 
 const router = Router();
 router.use(authenticate, resolveTenant, checkModule('inventory'));

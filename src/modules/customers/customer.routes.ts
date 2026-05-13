@@ -4,6 +4,8 @@ import { Customer } from './customer.entity';
 import { authenticate } from '../../shared/middleware/auth.middleware';
 import { resolveTenant } from '../../shared/middleware/tenant.middleware';
 import { ILike } from 'typeorm';
+import { Plan } from '../plans/plan.entity';
+import { checkLimit } from '../../shared/utils/plan.utils';
 
 const router = Router();
 router.use(authenticate, resolveTenant);
@@ -23,9 +25,29 @@ router.get('/', async (req: Request, res: Response) => {
 
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const customer = repo().create({ ...req.body, tenantId: req.tenant!.id });
+    const tenantId = req.tenant!.id;
+
+    // 1. Contar los clientes activos actuales del tenant
+    const currentCount = await repo().count({ where: { tenantId, isActive: true } });
+
+    // 2. Validar el límite con un casteo robusto para TypeScript
+    const check = await checkLimit(tenantId, 'maxCustomers' as any as keyof Plan, currentCount);
+
+    if (!check.allowed) {
+      res.status(403).json({
+        message: `Tu plan permite máximo ${check.limit} clientes activos. Actualiza tu plan para agregar más.`,
+        code: 'CUSTOMER_LIMIT_REACHED',
+        upgradeRequired: true,
+      });
+      return;
+    }
+
+    // 3. Crear y persistir el cliente si la validación es exitosa
+    const customer = repo().create({ ...req.body, tenantId });
     res.status(201).json(await repo().save(customer));
-  } catch (err: any) { res.status(400).json({ message: err.message }); }
+  } catch (err: any) { 
+    res.status(400).json({ message: err.message }); 
+  }
 });
 
 router.patch('/:id', async (req: Request, res: Response) => {

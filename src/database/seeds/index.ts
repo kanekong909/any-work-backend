@@ -46,6 +46,9 @@ async function seed() {
       priceMonthly: 0,
       maxUsers: 1,
       maxExpensesPerMonth: 50,
+      maxProducts: 30,
+      maxSalesPerMonth: 50,
+      maxCustomers: 10,
       features: FREE_MODULES,
     },
     {
@@ -54,6 +57,9 @@ async function seed() {
       priceMonthly: 35000,
       maxUsers: 5,
       maxExpensesPerMonth: -1,
+      maxProducts: 300,
+      maxSalesPerMonth: -1,
+      maxCustomers: -1,
       features: PRO_MODULES,
     },
     {
@@ -62,6 +68,9 @@ async function seed() {
       priceMonthly: 80000,
       maxUsers: -1,
       maxExpensesPerMonth: -1,
+      maxProducts: -1,
+      maxSalesPerMonth: -1,
+      maxCustomers: -1,
       features: BUSINESS_MODULES,
     },
   ];
@@ -72,7 +81,8 @@ async function seed() {
       await planRepo.save(planRepo.create(planData));
       console.log(`  ✅ Plan "${planData.displayName}" creado`);
     } else {
-      console.log(`  ⏭  Plan "${planData.displayName}" ya existe`);
+      await planRepo.save({ ...existing, ...planData });
+      console.log(`  🔄 Plan "${planData.displayName}" actualizado`);
     }
   }
 

@@ -9,6 +9,8 @@ import { Between, ILike } from 'typeorm';
 import { logAction } from '../../shared/utils/audit'; 
 import { AuditAction } from '../audit/audit-log.entity'; 
 import { User } from '../users/user.entity'; 
+import { checkLimit } from '../../shared/utils/plan.utils';
+import { Plan } from '../plans/plan.entity';
 
 const router = Router();
 router.use(authenticate, resolveTenant, checkModule('sales'));
@@ -80,12 +82,35 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  // Transacción: verificar stock + crear venta + actualizar inventario
+  // Transacción: verificar límites + verificar stock + crear venta + actualizar inventario
   const queryRunner = AppDataSource.createQueryRunner();
   await queryRunner.connect();
   await queryRunner.startTransaction();
 
   try {
+    // 1. VALIDACIÓN DE LÍMITE DE VENTAS MENSUALES
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+    // Contamos usando el queryRunner para asegurar consistencia transaccional
+    const salesThisMonth = await queryRunner.manager.count(Sale, {
+      where: { tenantId, createdAt: Between(monthStart, monthEnd) }
+    });
+
+    const salesCheck = await checkLimit(tenantId, 'maxSalesPerMonth' as keyof Plan, salesThisMonth);
+
+    if (!salesCheck.allowed) {
+      res.status(403).json({
+        message: `Tu plan permite máximo ${salesCheck.limit} ventas por mes. Actualiza tu plan para continuar vendiendo.`,
+        code: 'SALES_LIMIT_REACHED',
+        upgradeRequired: true,
+      });
+      await queryRunner.rollbackTransaction();
+      return;
+    }
+
+    // 2. PROCESAMIENTO DE ITEMS Y CONTROL DE STOCK
     const saleItems: SaleItem[] = [];
     let subtotal = 0;
 
@@ -116,6 +141,7 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
+    // 3. PERSISTENCIA DE LA VENTA
     const total = subtotal - Number(discount);
     const saleNumber = `VTA-${Date.now()}`;
 
@@ -138,10 +164,8 @@ router.post('/', async (req: Request, res: Response) => {
 
     // 🛡️ CONTROL SEGURO DE AUDITORÍA PARA CAJEROS
     try {
-      // Intentamos extraer el nombre del token
       let cashierName = (req.user as any)?.name;
       
-      // Si el cajero no tiene el nombre en su JWT, lo extraemos directamente de la BD
       if (!cashierName) {
         const userRepoInstance = AppDataSource.getRepository(User);
         const cashierUser = await userRepoInstance.findOne({ where: { id: req.user!.sub } });
@@ -152,18 +176,16 @@ router.post('/', async (req: Request, res: Response) => {
       const metodoLabel = metodosPago[paymentType] || paymentType;
       const clienteInfo = customerName ? ` al cliente "${customerName}"` : ' al público general';
 
-      // Guardado físico en la tabla audit_logs
       await logAction({
         tenantId: tenantId,
         userId: req.user!.sub,
-        userName: cashierName, // 👈 Pasamos el nombre verificado obtenido de la BD
+        userName: cashierName,
         action: AuditAction.CREATE,
         module: 'sales',
         description: `Registró la venta #${saleNumber}${clienteInfo} por un valor total de $${Number(total).toLocaleString('es-CO')} (${metodoLabel}).`
       });
 
     } catch (auditError) {
-      // Si el log falla por temas de concurrencia, no bloquea la respuesta 201 de la venta
       console.error('⚠️ Error al procesar el Log de Auditoría de la venta:', auditError);
     }
 

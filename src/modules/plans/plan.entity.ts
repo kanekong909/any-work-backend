@@ -6,32 +6,42 @@ import {
 @Entity('plans')
 export class Plan {
   @PrimaryGeneratedColumn('uuid')
-  id: string;
+  id!: string;
 
   @Column({ unique: true })
-  name: string; // 'free' | 'pro' | 'business'
+  name!: string;
 
   @Column()
-  displayName: string; // 'Free' | 'Pro' | 'Business'
+  displayName!: string;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
-  priceMonthly: number; // COP
+  priceMonthly!: number;
 
   @Column({ type: 'int', default: 1 })
-  maxUsers: number;
+  maxUsers!: number;
 
   @Column({ type: 'int', default: 50 })
-  maxExpensesPerMonth: number; // -1 = ilimitado
+  maxExpensesPerMonth!: number;
+
+  // Nuevos límites
+  @Column({ type: 'int', default: 30 })
+  maxProducts!: number; // -1 = ilimitado
+
+  @Column({ type: 'int', default: 50 })
+  maxSalesPerMonth!: number; // -1 = ilimitado
+
+  @Column({ type: 'int', default: 10 })
+  maxCustomers!: number; // -1 = ilimitado
 
   @Column({ type: 'jsonb', default: '{}' })
-  features: Record<string, boolean>; // módulos habilitados
+  features!: Record<string, boolean>;
 
   @Column({ default: true })
-  isActive: boolean;
+  isActive!: boolean;
 
   @CreateDateColumn()
-  createdAt: Date;
+  createdAt!: Date;
 
   @UpdateDateColumn()
-  updatedAt: Date;
+  updatedAt!: Date;
 }

@@ -6,6 +6,7 @@ import { Product } from '../products/product.entity';
 import { authenticate } from '../../shared/middleware/auth.middleware';
 import { resolveTenant } from '../../shared/middleware/tenant.middleware';
 import { Between } from 'typeorm';
+import { getActivePlan } from '../../shared/utils/plan.utils';
 
 const router = Router();
 router.use(authenticate, resolveTenant);
@@ -94,19 +95,37 @@ router.get('/summary', async (req: Request, res: Response) => {
 
 // GET /api/reports/sales-detail?from=&to=
 router.get('/sales-detail', async (req: Request, res: Response) => {
-  const tenantId = req.tenant!.id;
-  const { from, to } = req.query as { from: string; to: string };
-  const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-  const toDate = to ? new Date(to) : new Date();
-  toDate.setHours(23, 59, 59);
+  try {
+    const tenantId = req.tenant!.id;
 
-  const sales = await AppDataSource.getRepository(Sale).find({
-    where: { tenantId, createdAt: Between(fromDate, toDate) },
-    relations: ['items'],
-    order: { createdAt: 'DESC' },
-  });
+    // 1. Validar si el plan activo permite el acceso a reportes detallados
+    const plan = await getActivePlan(tenantId);
+    if (!plan || plan.name === 'free') {
+      res.status(403).json({
+        message: 'Exportar reportes detallados está disponible desde el plan Pro.',
+        code: 'FEATURE_NOT_AVAILABLE',
+        upgradeRequired: true,
+      });
+      return;
+    }
 
-  res.json(sales);
+    // 2. Procesar filtros de fechas si la validación es exitosa
+    const { from, to } = req.query as { from: string; to: string };
+    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const toDate = to ? new Date(to) : new Date();
+    toDate.setHours(23, 59, 59);
+
+    // 3. Consultar y retornar la información detallada de ventas
+    const sales = await AppDataSource.getRepository(Sale).find({
+      where: { tenantId, createdAt: Between(fromDate, toDate) },
+      relations: ['items'],
+      order: { createdAt: 'DESC' },
+    });
+
+    res.json(sales);
+  } catch (err: any) {
+    res.status(400).json({ message: err.message });
+  }
 });
 
 export default router;
