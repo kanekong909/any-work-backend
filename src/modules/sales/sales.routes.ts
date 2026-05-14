@@ -234,18 +234,61 @@ router.get('/summary', async (req: Request, res: Response) => {
 // PATCH /api/sales/:id
 router.patch('/:id', async (req: Request, res: Response) => {
   const sale = await saleRepo().findOne({
-    where: { id: req.params.id, tenantId: req.tenant!.id }
+    where: { id: req.params.id, tenantId: req.tenant!.id },
   });
   if (!sale) { res.status(404).json({ message: 'Venta no encontrada.' }); return; }
-  const { customerName, paymentType, notes, discount } = req.body;
+
+  const { customerName, paymentType, notes, discount, items } = req.body;
   if (customerName !== undefined) sale.customerName = customerName;
   if (paymentType) sale.paymentType = paymentType;
   if (notes !== undefined) sale.notes = notes;
-  if (discount !== undefined) {
+
+  if (items && items.length > 0) {
+    const saleItemRepo = AppDataSource.getRepository(SaleItem);
+
+    // Eliminar items anteriores directamente por SQL
+    await AppDataSource.query(`DELETE FROM sale_items WHERE "saleId" = $1`, [sale.id]);
+
+    // Insertar nuevos items
+    for (const i of items) {
+      await AppDataSource.query(
+        `INSERT INTO sale_items ("saleId", "productId", "productName", quantity, "unitPrice", subtotal)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          sale.id,
+          i.productId,
+          i.productName,
+          i.quantity,
+          i.unitPrice,
+          Number(i.unitPrice) * Number(i.quantity),
+        ]
+      );
+    }
+
+    const subtotal = items.reduce((a: number, i: any) =>
+      a + Number(i.unitPrice) * Number(i.quantity), 0);
+    sale.subtotal = subtotal;
+    sale.discount = discount ?? sale.discount;
+    sale.total = subtotal - Number(sale.discount);
+  } else if (discount !== undefined) {
     sale.discount = discount;
     sale.total = Number(sale.subtotal) - Number(discount);
   }
-  res.json(await saleRepo().save(sale));
+
+  // Guardar sale sin cascade de items
+  await AppDataSource.query(
+    `UPDATE sales SET "customerName" = $1, "paymentType" = $2, notes = $3,
+     subtotal = $4, discount = $5, total = $6 WHERE id = $7`,
+    [sale.customerName, sale.paymentType, sale.notes,
+     sale.subtotal, sale.discount, sale.total, sale.id]
+  );
+
+  // Retornar venta actualizada con items
+  const updated = await saleRepo().findOne({
+    where: { id: sale.id },
+    relations: ['items'],
+  });
+  res.json(updated);
 });
 
 // DELETE /api/sales/:id
