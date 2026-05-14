@@ -9,6 +9,14 @@ import { Like, ILike } from 'typeorm';
 import { logAction } from '../../shared/utils/audit'; // 👈 Helper de auditoría
 import { AuditAction } from '../audit/audit-log.entity'; // 👈 Enum de acciones
 import { checkLimit } from '../../shared/utils/plan.utils';
+import { upload } from '../../shared/middleware/upload.middleware';
+import { v2 as cloudinary } from 'cloudinary';
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 const router = Router();
 router.use(authenticate, resolveTenant, checkModule('inventory'));
@@ -208,6 +216,43 @@ router.patch('/categories/:id', async (req: Request, res: Response) => {
 router.delete('/categories/:id', async (req: Request, res: Response) => {
   await categoryRepo().delete({ id: req.params.id, tenantId: req.tenant!.id });
   res.json({ message: 'Categoría eliminada.' });
+});
+
+// Imagen
+// POST /api/products/:id/image
+router.post('/:id/image', upload.single('image'), async (req: Request, res: Response) => {
+  if (!req.file) {
+    res.status(400).json({ message: 'No se recibió ninguna imagen.' });
+    return;
+  }
+
+  const product = await productRepo().findOne({
+    where: { id: req.params.id, tenantId: req.tenant!.id }
+  });
+  if (!product) { res.status(404).json({ message: 'Producto no encontrado.' }); return; }
+
+  try {
+    const result = await new Promise<any>((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          folder: `nexoadmin/products/${req.tenant!.id}`,
+          public_id: req.params.id,
+          overwrite: true,
+          transformation: [{ width: 400, height: 400, crop: 'limit' }],
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      stream.end(req.file!.buffer);
+    });
+
+    await productRepo().update(product.id, { imageUrl: result.secure_url });
+    res.json({ imageUrl: result.secure_url });
+  } catch {
+    res.status(500).json({ message: 'Error al subir la imagen.' });
+  }
 });
 
 export default router;
