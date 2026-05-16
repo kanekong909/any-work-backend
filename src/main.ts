@@ -23,6 +23,7 @@ import supplierRoutes from './modules/suppliers/supplier.routes';
 import reportRoutes from './modules/reports/report.routes';
 import auditRoutes from './modules/audit/audit.routes';
 import boldRoutes from './modules/payments/bold.routes';
+import receiptRoutes from './modules/suppliers/receipt.routes';
 
 dotenv.config();
 
@@ -80,6 +81,7 @@ app.use('/api/suppliers', supplierRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/payments', boldRoutes);
+app.use('/api/receipts', receiptRoutes);
 
 // ── 404 ────────────────────────────────────────────────────────
 app.use((_, res) => {

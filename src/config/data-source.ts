@@ -12,6 +12,7 @@ import { Sale, SaleItem } from '../modules/sales/sale.entity';
 import { Customer } from '../modules/customers/customer.entity';
 import { Supplier } from '../modules/suppliers/supplier.entity';
 import { AuditLog } from '../modules/audit/audit-log.entity';
+import { SupplierReceipt, SupplierReceiptItem } from '../modules/suppliers/supplier-receipt.entity';
 
 dotenv.config();
 
@@ -34,6 +35,8 @@ export const AppDataSource = new DataSource({
     Customer,
     Supplier,
     AuditLog,
+    SupplierReceipt,
+    SupplierReceiptItem
   ],
   migrations: ['src/database/migrations/*.ts'],
   synchronize: process.env.NODE_ENV === 'development', // Solo en dev

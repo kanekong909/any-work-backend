@@ -233,12 +233,26 @@ router.get('/summary', async (req: Request, res: Response) => {
 
 // PATCH /api/sales/:id
 router.patch('/:id', async (req: Request, res: Response) => {
+  const tenantId = req.tenant!.id;
   const sale = await saleRepo().findOne({
-    where: { id: req.params.id, tenantId: req.tenant!.id },
+    where: { id: req.params.id, tenantId },
   });
-  if (!sale) { res.status(404).json({ message: 'Venta no encontrada.' }); return; }
+  if (!sale) { 
+    res.status(404).json({ message: 'Venta no encontrada.' }); 
+    return; 
+  }
 
   const { customerName, paymentType, notes, discount, items } = req.body;
+  
+  // Guardamos los valores anteriores para la auditoría
+  const previousValues = {
+    customerName: sale.customerName,
+    paymentType: sale.paymentType,
+    notes: sale.notes,
+    discount: sale.discount,
+    total: sale.total,
+  };
+
   if (customerName !== undefined) sale.customerName = customerName;
   if (paymentType) sale.paymentType = paymentType;
   if (notes !== undefined) sale.notes = notes;
@@ -288,17 +302,113 @@ router.patch('/:id', async (req: Request, res: Response) => {
     where: { id: sale.id },
     relations: ['items'],
   });
+
+  // 🛡️ AUDITORÍA: Registrar la edición de la venta
+  try {
+    let cashierName = (req.user as any)?.name;
+    
+    if (!cashierName) {
+      const userRepoInstance = AppDataSource.getRepository(User);
+      const cashierUser = await userRepoInstance.findOne({ where: { id: req.user!.sub } });
+      cashierName = cashierUser ? cashierUser.name : 'Usuario';
+    }
+
+    // Construir descripción de cambios
+    const cambios: string[] = [];
+    
+    if (customerName !== undefined && customerName !== previousValues.customerName) {
+      cambios.push(`cambió el cliente de "${previousValues.customerName || 'público general'}" a "${customerName || 'público general'}"`);
+    }
+    
+    if (paymentType && paymentType !== previousValues.paymentType) {
+      const metodosPago: Record<string, string> = { cash: 'Efectivo', card: 'Tarjeta', transfer: 'Transferencia' };
+      cambios.push(`cambió el método de pago de "${metodosPago[previousValues.paymentType] || previousValues.paymentType}" a "${metodosPago[paymentType] || paymentType}"`);
+    }
+    
+    if (discount !== undefined && Number(discount) !== Number(previousValues.discount)) {
+      cambios.push(`cambió el descuento de $${Number(previousValues.discount).toLocaleString('es-CO')} a $${Number(discount).toLocaleString('es-CO')}`);
+    }
+    
+    if (items && items.length > 0) {
+      cambios.push(`actualizó los productos de la venta (${items.length} items)`);
+    }
+    
+    if (notes !== undefined && notes !== previousValues.notes) {
+      cambios.push('modificó las notas de la venta');
+    }
+
+    const descripcionCambios = cambios.length > 0 
+      ? `Editó la venta #${sale.saleNumber}: ${cambios.join('. ')}. Total actual: $${Number(sale.total).toLocaleString('es-CO')}`
+      : `Editó la venta #${sale.saleNumber} sin cambios significativos. Total: $${Number(sale.total).toLocaleString('es-CO')}`;
+
+    await logAction({
+      tenantId: tenantId,
+      userId: req.user!.sub,
+      userName: cashierName,
+      action: AuditAction.UPDATE,
+      module: 'sales',
+      description: descripcionCambios
+    });
+
+  } catch (auditError) {
+    console.error('⚠️ Error al procesar el Log de Auditoría de edición de venta:', auditError);
+  }
+
   res.json(updated);
 });
 
 // DELETE /api/sales/:id
 router.delete('/:id', async (req: Request, res: Response) => {
+  const tenantId = req.tenant!.id;
+  
   const sale = await saleRepo().findOne({
-    where: { id: req.params.id, tenantId: req.tenant!.id }
+    where: { id: req.params.id, tenantId },
+    relations: ['items']
   });
-  if (!sale) { res.status(404).json({ message: 'Venta no encontrada.' }); return; }
+  
+  if (!sale) { 
+    res.status(404).json({ message: 'Venta no encontrada.' }); 
+    return; 
+  }
+
+  // Guardamos información para la auditoría antes de eliminar
+  const saleInfo = {
+    saleNumber: sale.saleNumber,
+    total: sale.total,
+    customerName: sale.customerName,
+    itemsCount: sale.items?.length || 0
+  };
+
   await AppDataSource.query(`DELETE FROM sale_items WHERE "saleId" = $1`, [sale.id]);
   await saleRepo().delete(sale.id);
+
+  // 🛡️ AUDITORÍA: Registrar la eliminación de la venta
+  try {
+    let cashierName = (req.user as any)?.name;
+    
+    if (!cashierName) {
+      const userRepoInstance = AppDataSource.getRepository(User);
+      const cashierUser = await userRepoInstance.findOne({ where: { id: req.user!.sub } });
+      cashierName = cashierUser ? cashierUser.name : 'Usuario';
+    }
+
+    const clienteInfo = saleInfo.customerName 
+      ? ` del cliente "${saleInfo.customerName}"` 
+      : ' al público general';
+
+    await logAction({
+      tenantId: tenantId,
+      userId: req.user!.sub,
+      userName: cashierName,
+      action: AuditAction.DELETE,
+      module: 'sales',
+      description: `Eliminó la venta #${saleInfo.saleNumber}${clienteInfo} por un valor de $${Number(saleInfo.total).toLocaleString('es-CO')} (${saleInfo.itemsCount} productos)`
+    });
+
+  } catch (auditError) {
+    console.error('⚠️ Error al procesar el Log de Auditoría de eliminación de venta:', auditError);
+  }
+
   res.json({ message: 'Venta eliminada.' });
 });
 
