@@ -12,10 +12,11 @@ const receiptRepo = () => AppDataSource.getRepository(SupplierReceipt);
 
 // GET /api/receipts
 router.get('/', async (req: Request, res: Response) => {
-  const { supplierId, page = 1, limit = 20 } = req.query;
+  const { supplierId, search, page = 1, limit = 20 } = req.query;
   const where: any = { tenantId: req.tenant!.id };
+  
   if (supplierId) where.supplierId = supplierId;
-
+  
   const [items, total] = await receiptRepo().findAndCount({
     where,
     order: { createdAt: 'DESC' },
@@ -23,7 +24,25 @@ router.get('/', async (req: Request, res: Response) => {
     skip: (Number(page) - 1) * Number(limit),
     relations: ['supplier', 'receivedBy'],
   });
-  res.json({ items, total });
+  
+  // 🔥 FILTRAR RESULTADOS (si hay búsqueda)
+  let filteredItems = items;
+  if (search && String(search).trim()) {
+    const searchTerm = String(search).toLowerCase().trim();
+    filteredItems = items.filter(receipt => {
+      const supplierMatch = receipt.supplier?.name?.toLowerCase().includes(searchTerm);
+      const invoiceMatch = receipt.invoiceNumber?.toLowerCase().includes(searchTerm);
+      const productMatch = receipt.items?.some(item => 
+        item.productName?.toLowerCase().includes(searchTerm)
+      );
+      return supplierMatch || invoiceMatch || productMatch;
+    });
+  }
+  
+  res.json({ 
+    items: filteredItems, 
+    total: search ? filteredItems.length : total 
+  });
 });
 
 // POST /api/receipts
