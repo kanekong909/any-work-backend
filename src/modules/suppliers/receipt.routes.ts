@@ -80,6 +80,52 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
+// PUT /api/receipts/:id
+router.put('/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { supplierId, invoiceNumber, notes, status, items } = req.body;
+
+    // Buscar la recepción existente
+    const existingReceipt = await receiptRepo().findOne({
+      where: { id, tenantId: req.tenant!.id },
+      relations: ['items']
+    });
+
+    if (!existingReceipt) {
+      res.status(404).json({ message: 'Recepción no encontrada' });
+      return;
+    }
+
+    // Actualizar campos básicos
+    existingReceipt.supplierId = supplierId || null;
+    existingReceipt.invoiceNumber = invoiceNumber;
+    existingReceipt.notes = notes;
+    existingReceipt.status = status;
+
+    // Eliminar items antiguos
+    await AppDataSource.query(`DELETE FROM supplier_receipt_items WHERE "receiptId" = $1`, [id]);
+
+    // Crear nuevos items
+    existingReceipt.items = items.map((i: any) => {
+      const item = new SupplierReceiptItem();
+      item.productName = i.productName;
+      item.productId = i.productId || null;
+      item.quantity = i.quantity;
+      item.unit = i.unit || 'unit';
+      item.unitCost = i.unitCost || 0;
+      item.condition = i.condition || 'bueno';
+      item.notes = i.notes || '';
+      return item;
+    });
+
+    const saved = await receiptRepo().save(existingReceipt);
+    res.json(saved);
+  } catch (err: any) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
 // DELETE /api/receipts/:id
 router.delete('/:id', async (req: Request, res: Response) => {
   await AppDataSource.query(`DELETE FROM supplier_receipt_items WHERE "receiptId" = $1`, [req.params.id]);
