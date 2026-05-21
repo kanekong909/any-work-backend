@@ -10,14 +10,31 @@ import dotenv from 'dotenv';
 import { AppDataSource } from './config/data-source';
 
 // Rutas
+
+// Autenticacion
 import authRoutes from './modules/auth/auth.routes';
+
+// Usuarios
 import userRoutes from './modules/users/user.routes';
 import tenantRoutes from './modules/tenants/tenant.routes';
+
+// Planes
 import planRoutes from './modules/plans/plan.routes';
+
+// Productos
 import productRoutes from './modules/products/product.routes';
+import stockMovementRoutes from './modules/products/stock-movement.routes';
+
+// Gastos
 import expenseRoutes from './modules/expenses/expense.routes';
+
+// Ventas
 import salesRoutes from './modules/sales/sales.routes';
+
+// Admin - Superusuario
 import adminRoutes from './modules/admin/admin.routes';
+
+// Clientes
 import customerRoutes from './modules/customers/customer.routes';
 import supplierRoutes from './modules/suppliers/supplier.routes';
 import reportRoutes from './modules/reports/report.routes';
@@ -73,6 +90,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/tenants', tenantRoutes);
 app.use('/api/plans', planRoutes);
 app.use('/api/products', productRoutes);
+app.use('/api/stock-movements', stockMovementRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/admin', adminRoutes);

@@ -5,12 +5,13 @@ import { Product } from '../products/product.entity';
 import { authenticate } from '../../shared/middleware/auth.middleware';
 import { resolveTenant, checkModule } from '../../shared/middleware/tenant.middleware';
 // import { format } from 'date-fns';
-import { Between, ILike } from 'typeorm'; 
-import { logAction } from '../../shared/utils/audit'; 
-import { AuditAction } from '../audit/audit-log.entity'; 
-import { User } from '../users/user.entity'; 
+import { Between, ILike } from 'typeorm';
+import { logAction } from '../../shared/utils/audit';
+import { AuditAction } from '../audit/audit-log.entity';
+import { User } from '../users/user.entity';
 import { checkLimit } from '../../shared/utils/plan.utils';
 import { Plan } from '../plans/plan.entity';
+import { StockMovementService } from '../products/stock-movement.service';
 
 const router = Router();
 router.use(authenticate, resolveTenant, checkModule('sales'));
@@ -139,6 +140,21 @@ router.post('/', async (req: Request, res: Response) => {
       await queryRunner.manager.update(Product, product.id, {
         stock: Number(product.stock) - Number(item.quantity),
       });
+
+      // Registrar movimiento de stock (dentro de la transacción)
+      try {
+        await StockMovementService.recordSaleMovement(
+          product.id,
+          Number(item.quantity),
+          tenantId,
+          req.user!.sub,
+          undefined,
+          undefined,
+          queryRunner
+        );
+      } catch (movementError) {
+        console.error('⚠️ Error al registrar movimiento de venta:', movementError);
+      }
     }
 
     // 3. PERSISTENCIA DE LA VENTA
