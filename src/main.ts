@@ -23,7 +23,6 @@ import planRoutes from './modules/plans/plan.routes';
 
 // Productos
 import productRoutes from './modules/products/product.routes';
-import stockMovementRoutes from './modules/products/stock-movement.routes';
 
 // Gastos
 import expenseRoutes from './modules/expenses/expense.routes';
@@ -90,7 +89,6 @@ app.use('/api/users', userRoutes);
 app.use('/api/tenants', tenantRoutes);
 app.use('/api/plans', planRoutes);
 app.use('/api/products', productRoutes);
-app.use('/api/stock-movements', stockMovementRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/admin', adminRoutes);
