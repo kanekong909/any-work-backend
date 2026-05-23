@@ -11,6 +11,7 @@ import { AuditAction } from '../audit/audit-log.entity';
 import { User } from '../users/user.entity';
 import { checkLimit } from '../../shared/utils/plan.utils';
 import { Plan } from '../plans/plan.entity';
+import { StockMovement, MovementReason, MovementType } from '../products/stock.movement';
 
 const router = Router();
 router.use(authenticate, resolveTenant, checkModule('sales'));
@@ -82,7 +83,6 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  // Transacción: verificar límites + verificar stock + crear venta + actualizar inventario
   const queryRunner = AppDataSource.createQueryRunner();
   await queryRunner.connect();
   await queryRunner.startTransaction();
@@ -93,7 +93,6 @@ router.post('/', async (req: Request, res: Response) => {
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
-    // Contamos usando el queryRunner para asegurar consistencia transaccional
     const salesThisMonth = await queryRunner.manager.count(Sale, {
       where: { tenantId, createdAt: Between(monthStart, monthEnd) }
     });
@@ -110,9 +109,10 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // 2. PROCESAMIENTO DE ITEMS Y CONTROL DE STOCK
+    // 2. PROCESAMIENTO DE ITEMS, CONTROL DE STOCK Y REGISTRO DE MOVIMIENTOS
     const saleItems: SaleItem[] = [];
     let subtotal = 0;
+    const movements = []; // 👈 Para almacenar movimientos
 
     for (const item of items) {
       const product = await queryRunner.manager.findOne(Product, {
@@ -124,21 +124,42 @@ router.post('/', async (req: Request, res: Response) => {
         throw new Error(`Stock insuficiente para "${product.name}". Disponible: ${product.stock}`);
       }
 
-      const itemSubtotal = Number(product.salePrice) * Number(item.quantity);
+      const stockBefore = Number(product.stock);
+      const quantity = Number(item.quantity);
+      const stockAfter = stockBefore - quantity;
+
+      const itemSubtotal = Number(product.salePrice) * quantity;
       subtotal += itemSubtotal;
 
       const saleItem = new SaleItem();
       saleItem.productId = product.id;
       saleItem.productName = product.name;
-      saleItem.quantity = item.quantity;
+      saleItem.quantity = quantity;
       saleItem.unitPrice = product.salePrice;
       saleItem.subtotal = itemSubtotal;
       saleItems.push(saleItem);
 
       // Descontar stock
       await queryRunner.manager.update(Product, product.id, {
-        stock: Number(product.stock) - Number(item.quantity),
+        stock: stockAfter,
       });
+
+      // 👈 REGISTRAR MOVIMIENTO DE STOCK (SALIDA POR VENTA)
+      const movement = new StockMovement();
+      movement.productId = product.id;
+      movement.movementType = MovementType.OUT;
+      movement.reason = MovementReason.SALE;
+      movement.quantity = quantity;
+      movement.stockBefore = stockBefore;
+      movement.stockAfter = stockAfter;
+      movement.unitCost = product.costPrice;
+      movement.referenceId = null; // Se actualizará después con el ID de la venta
+      movement.referenceType = 'sale';
+      movement.notes = `Venta - Cliente: ${customerName || 'Público general'} - Item: ${product.name}`;
+      movement.userId = req.user!.sub;
+      movement.tenantId = tenantId;
+      
+      movements.push(movement);
     }
 
     // 3. PERSISTENCIA DE LA VENTA
@@ -158,11 +179,17 @@ router.post('/', async (req: Request, res: Response) => {
     sale.items = saleItems;
 
     const saved = await queryRunner.manager.save(Sale, sale);
+
+    // 👈 Actualizar los movimientos con el ID de la venta
+    for (const movement of movements) {
+      movement.referenceId = saved.id;
+      await queryRunner.manager.save(StockMovement, movement);
+    }
     
-    // Confirmamos la transacción en la base de datos de manera definitiva
+    // Confirmamos la transacción
     await queryRunner.commitTransaction();
 
-    // 🛡️ CONTROL SEGURO DE AUDITORÍA PARA CAJEROS
+    // 🛡️ AUDITORÍA
     try {
       let cashierName = (req.user as any)?.name;
       
@@ -357,59 +384,110 @@ router.patch('/:id', async (req: Request, res: Response) => {
   res.json(updated);
 });
 
-// DELETE /api/sales/:id
+// DELETE /api/sales/:id - Eliminar venta, revertir stock y registrar movimiento
 router.delete('/:id', async (req: Request, res: Response) => {
-  const tenantId = req.tenant!.id;
-  
-  const sale = await saleRepo().findOne({
-    where: { id: req.params.id, tenantId },
-    relations: ['items']
-  });
-  
-  if (!sale) { 
-    res.status(404).json({ message: 'Venta no encontrada.' }); 
-    return; 
-  }
+  const queryRunner = AppDataSource.createQueryRunner();
+  await queryRunner.connect();
+  await queryRunner.startTransaction();
 
-  // Guardamos información para la auditoría antes de eliminar
-  const saleInfo = {
-    saleNumber: sale.saleNumber,
-    total: sale.total,
-    customerName: sale.customerName,
-    itemsCount: sale.items?.length || 0
-  };
-
-  await AppDataSource.query(`DELETE FROM sale_items WHERE "saleId" = $1`, [sale.id]);
-  await saleRepo().delete(sale.id);
-
-  // 🛡️ AUDITORÍA: Registrar la eliminación de la venta
   try {
-    let cashierName = (req.user as any)?.name;
+    const tenantId = req.tenant!.id;
     
-    if (!cashierName) {
-      const userRepoInstance = AppDataSource.getRepository(User);
-      const cashierUser = await userRepoInstance.findOne({ where: { id: req.user!.sub } });
-      cashierName = cashierUser ? cashierUser.name : 'Usuario';
+    const sale = await saleRepo().findOne({
+      where: { id: req.params.id, tenantId },
+      relations: ['items']
+    });
+    
+    if (!sale) { 
+      res.status(404).json({ message: 'Venta no encontrada.' }); 
+      return; 
     }
 
-    const clienteInfo = saleInfo.customerName 
-      ? ` del cliente "${saleInfo.customerName}"` 
-      : ' al público general';
+    // Guardamos información para la auditoría antes de eliminar
+    const saleInfo = {
+      saleNumber: sale.saleNumber,
+      total: sale.total,
+      customerName: sale.customerName,
+      itemsCount: sale.items?.length || 0,
+      items: sale.items || []
+    };
 
-    await logAction({
-      tenantId: tenantId,
-      userId: req.user!.sub,
-      userName: cashierName,
-      action: AuditAction.DELETE,
-      module: 'sales',
-      description: `Eliminó la venta #${saleInfo.saleNumber}${clienteInfo} por un valor de $${Number(saleInfo.total).toLocaleString('es-CO')} (${saleInfo.itemsCount} productos)`
-    });
+    // Revertir stock (devolver al inventario) y registrar movimientos
+    for (const item of saleInfo.items) {
+      const product = await queryRunner.manager.findOne(Product, {
+        where: { id: item.productId, tenantId }
+      });
+      
+      if (product) {
+        const stockBefore = Number(product.stock);
+        const quantity = Number(item.quantity);
+        const stockAfter = stockBefore + quantity;
+        
+        // Actualizar stock del producto
+        await queryRunner.manager.update(Product, product.id, { stock: stockAfter });
+        
+        // Registrar movimiento de stock (entrada por devolución)
+        const movement = new StockMovement();
+        movement.productId = product.id;
+        movement.movementType = MovementType.IN;
+        movement.reason = MovementReason.CUSTOMER_RETURN;
+        movement.quantity = quantity;
+        movement.stockBefore = stockBefore;
+        movement.stockAfter = stockAfter;
+        movement.unitCost = product.costPrice;
+        movement.referenceId = sale.id;
+        movement.referenceType = 'sale_deleted';
+        movement.notes = `Reversión por eliminación de venta #${sale.saleNumber} - Producto: ${product.name}`;
+        movement.userId = req.user!.sub;
+        movement.tenantId = tenantId;
+        
+        await queryRunner.manager.save(StockMovement, movement);
+      }
+    }
 
-  } catch (auditError) {
-    console.error('⚠️ Error al procesar el Log de Auditoría de eliminación de venta:', auditError);
+    // Eliminar items de la venta
+    await queryRunner.manager.delete(SaleItem, { saleId: sale.id });
+    
+    // Eliminar la venta
+    await queryRunner.manager.delete(Sale, sale.id);
+
+    await queryRunner.commitTransaction();
+
+    // 🛡️ AUDITORÍA: Registrar la eliminación de la venta
+    try {
+      let cashierName = (req.user as any)?.name;
+      
+      if (!cashierName) {
+        const userRepoInstance = AppDataSource.getRepository(User);
+        const cashierUser = await userRepoInstance.findOne({ where: { id: req.user!.sub } });
+        cashierName = cashierUser ? cashierUser.name : 'Usuario';
+      }
+
+      const clienteInfo = saleInfo.customerName 
+        ? ` del cliente "${saleInfo.customerName}"` 
+        : ' al público general';
+
+      await logAction({
+        tenantId: tenantId,
+        userId: req.user!.sub,
+        userName: cashierName,
+        action: AuditAction.DELETE,
+        module: 'sales',
+        description: `Eliminó la venta #${saleInfo.saleNumber}${clienteInfo} por un valor de $${Number(saleInfo.total).toLocaleString('es-CO')} (${saleInfo.itemsCount} productos). El stock fue revertido.`
+      });
+
+    } catch (auditError) {
+      console.error('⚠️ Error al procesar el Log de Auditoría de eliminación de venta:', auditError);
+    }
+
+    res.json({ message: 'Venta eliminada y stock revertido correctamente.' });
+    
+  } catch (err: any) {
+    await queryRunner.rollbackTransaction();
+    res.status(400).json({ message: err.message });
+  } finally {
+    await queryRunner.release();
   }
-
-  res.json({ message: 'Venta eliminada.' });
 });
 
 export default router;

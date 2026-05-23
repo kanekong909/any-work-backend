@@ -57,7 +57,7 @@ export class StockMovement {
   unitCost: number;
 
   @Column({ type: 'text', nullable: true })
-  referenceId: string; // ID de la recepción, factura, etc.
+  referenceId: string | null; // ID de la recepción, factura, etc.
 
   @Column({ type: 'varchar', nullable: true })
   referenceType: string; // 'supplier_receipt', 'sale', 'adjustment'
